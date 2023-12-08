@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eevans/wikimedia/internal/events"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -80,11 +82,11 @@ func TestRecentChanges(t *testing.T) {
 	// defer cleanup()
 
 	client := &Client{BaseURL: DefaultURL, Predicates: map[string]interface{}{"namespace": 0}}
-	events := make(chan RecentChangeEvent)
+	receivedEvents := make(chan events.RecentChangeEvent)
 
 	go func() {
-		err := client.RecentChanges(func(evt RecentChangeEvent) {
-			events <- evt
+		err := client.RecentChanges(func(evt events.RecentChangeEvent) {
+			receivedEvents <- evt
 		})
 		if err != nil {
 			require.FailNow(t, "Client returned error: %v", err)
@@ -92,7 +94,7 @@ func TestRecentChanges(t *testing.T) {
 	}()
 
 	select {
-	case evt := <-events:
+	case evt := <-receivedEvents:
 		require.Equal(t, 0, evt.Namespace, "Received event not matching namespace predicate")
 	case <-time.After(time.Second * 5):
 		require.FailNow(t, "No events received.")

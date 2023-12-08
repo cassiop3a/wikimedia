@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eevans/wikimedia/internal/events"
+
 	"github.com/jpillora/backoff"
 	"github.com/r3labs/sse"
 )
@@ -52,25 +54,25 @@ func (client *Client) LastTimestamp() string {
 
 // RecentChanges subscribes to the recent changes feed. The handler is invoked with a
 // RecentChangeEvent once for every matching event received.
-func (client *Client) RecentChanges(handler func(evt RecentChangeEvent)) error {
+func (client *Client) RecentChanges(handler func(evt events.RecentChangeEvent)) error {
 	var bOff = &backoff.Backoff{}
 	var err error
-	var events *sse.Client
+	var sseClient *sse.Client
 	var lastSub time.Time
 
 	for {
 		// Reconnect on each iteration; Client#url will include a `since` param with the
 		// timestamp of the last observed event from any previous iterations.
-		events = sse.NewClient(client.url("recentchange"))
+		sseClient = sse.NewClient(client.url("recentchange"))
 		lastSub = time.Now()
 
-		err = events.Subscribe("message", func(msg *sse.Event) {
+		err = sseClient.Subscribe("message", func(msg *sse.Event) {
 			// This actually happens; The first event that fires is always empty
 			if len(msg.Data) == 0 {
 				return
 			}
 
-			evt := RecentChangeEvent{}
+			evt := events.RecentChangeEvent{}
 			if err := json.Unmarshal(msg.Data, &evt); err != nil {
 				log.Printf("Error deserializing JSON event: %s\n", err)
 				return
@@ -88,7 +90,7 @@ func (client *Client) RecentChanges(handler func(evt RecentChangeEvent)) error {
 		}
 
 		// If we've been running for resetInterval or longer, we'll treat this as a new set of retries
-		if time.Now().Sub(lastSub) >= resetInterval {
+		if time.Since(lastSub) >= resetInterval {
 			bOff.Reset()
 		}
 
@@ -127,11 +129,7 @@ func matching(v reflect.Value, p map[string]interface{}) bool {
 	}
 
 	// If the number of matches is equal to the number of predicates ('all matching'), then the event is a match.
-	if matches == len(p) {
-		return true
-	}
-
-	return false
+	return matches == len(p)
 }
 
 func (client *Client) url(stream string) string {
