@@ -12,6 +12,6 @@ type Meta struct {
 	Offset    int    `json:"offset"`
 }
 
-type Event struct {
+type EventData struct {
 	Schema string `json:"$schema"`
 }

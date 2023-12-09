@@ -27,5 +27,5 @@ type RecentChangeEvent struct {
 	ServerScriptPath string `json:"server_script_path"`
 	Wiki             string `json:"wiki"`
 	ParsedComment    string `json:"parsedcomment"`
-	Event
+	EventData
 }

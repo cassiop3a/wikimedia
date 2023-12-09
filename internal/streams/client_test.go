@@ -85,7 +85,7 @@ func TestRecentChanges(t *testing.T) {
 	receivedEvents := make(chan events.RecentChangeEvent)
 
 	go func() {
-		err := client.RecentChanges(func(evt events.RecentChangeEvent) {
+		err := client.GetStreamData("recentchange", func(evt events.RecentChangeEvent) {
 			receivedEvents <- evt
 		})
 		if err != nil {
@@ -95,7 +95,31 @@ func TestRecentChanges(t *testing.T) {
 
 	select {
 	case evt := <-receivedEvents:
-		require.Equal(t, 0, evt.Namespace, "Received event not matching namespace predicate")
+		require.Equal(t, "mediawiki.recentchange", evt.Meta.Stream)
+	case <-time.After(time.Second * 5):
+		require.FailNow(t, "No events received.")
+	}
+}
+
+func TestRevisionCreate(t *testing.T) {
+	// setup()
+	// defer cleanup()
+
+	client := &Client{BaseURL: DefaultURL, Predicates: map[string]interface{}{"namespace": 0}}
+	receivedEvents := make(chan events.RevisionCreateEvent)
+
+	go func() {
+		err := client.GetStreamData("revision-create", func(evt events.RevisionCreateEvent) {
+			receivedEvents <- evt
+		})
+		if err != nil {
+			require.FailNow(t, "Client returned error: %v", err)
+		}
+	}()
+
+	select {
+	case evt := <-receivedEvents:
+		require.Equal(t, "mediawiki.revision-create", evt.Meta.Stream)
 	case <-time.After(time.Second * 5):
 		require.FailNow(t, "No events received.")
 	}

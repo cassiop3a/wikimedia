@@ -23,6 +23,7 @@ type RevisionCreateEvent struct {
 	Dt                string    `json:"dt"`
 	RevSlots          RevSlots  `json:"rev_slots"`
 	RevContentChanged bool      `json:"rev_content_changed"`
+	EventData
 }
 
 type Performer struct {

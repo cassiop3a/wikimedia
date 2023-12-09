@@ -2,13 +2,12 @@ package streams
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"reflect"
 	"strings"
 	"time"
-
-	"github.com/eevans/wikimedia/internal/events"
 
 	"github.com/jpillora/backoff"
 	"github.com/r3labs/sse"
@@ -36,7 +35,7 @@ type Client struct {
 }
 
 // NewClient returns an initialized Client
-func NewClient() *Client {
+func NewClient(event string) *Client {
 	return &Client{BaseURL: DefaultURL, Predicates: make(map[string]interface{})}
 }
 
@@ -54,82 +53,67 @@ func (client *Client) LastTimestamp() string {
 
 // RecentChanges subscribes to the recent changes feed. The handler is invoked with a
 // RecentChangeEvent once for every matching event received.
-func (client *Client) RecentChanges(handler func(evt events.RecentChangeEvent)) error {
+func (client *Client) GetStreamData(stream string, handlerFunc interface{}) error {
 	var bOff = &backoff.Backoff{}
-	var err error
-	var sseClient *sse.Client
-	var lastSub time.Time
-
 	for {
-		// Reconnect on each iteration; Client#url will include a `since` param with the
-		// timestamp of the last observed event from any previous iterations.
-		sseClient = sse.NewClient(client.url("recentchange"))
-		lastSub = time.Now()
-
-		err = sseClient.Subscribe("message", func(msg *sse.Event) {
-			// This actually happens; The first event that fires is always empty
-			if len(msg.Data) == 0 {
-				return
-			}
-
-			evt := events.RecentChangeEvent{}
-			if err := json.Unmarshal(msg.Data, &evt); err != nil {
-				log.Printf("Error deserializing JSON event: %s\n", err)
-				return
-			}
-
-			client.lastTimestamp = evt.Meta.Dt
-
-			if matching(reflect.ValueOf(evt), client.Predicates) {
-				handler(evt)
-			}
-		})
-
+		var lastSub time.Time
+		err := client.UnmarshalJSONBasedOnStream(stream, handlerFunc, &lastSub)
 		if err == nil {
 			return err
 		}
-
-		// If we've been running for resetInterval or longer, we'll treat this as a new set of retries
 		if time.Since(lastSub) >= resetInterval {
 			bOff.Reset()
 		}
-
-		// Backoff
 		time.Sleep(bOff.Duration())
-
-		// Bail-out if reaching the limit on retries
 		if bOff.Attempt() >= retries {
 			return err
 		}
-
-		// Start the next iteration where we last left off.
 		client.Since = client.lastTimestamp
 	}
 }
 
-// Given the reflect.Value for a JSON annotated event struct, and a predicate map, returns true if all predicates match.
-func matching(v reflect.Value, p map[string]interface{}) bool {
-	matches := 0
+func (client *Client) UnmarshalJSONBasedOnStream(stream string, handlerFunc interface{}, lastSub *time.Time) error {
+	sseClient := sse.NewClient(client.url(stream))
 
-	// Iterate over the fields of a JSON annotated event struct...
-	for i := 0; i < v.NumField(); i++ {
-		// Obtain the value of the 'json' annotation...
-		tag := v.Type().Field(i).Tag.Get("json")
-		// Skip when missing or unset...
-		if tag == "" || tag == "-" {
-			continue
-		}
+	handler := reflect.ValueOf(handlerFunc)
 
-		// If a predicate exists for this field, and it matches, add it to our count...
-		if predicate, present := p[tag]; present {
-			if predicate == v.Field(i).Interface() {
-				matches++
-			}
-		}
+	if handler.Kind() != reflect.Func {
+		return errors.New("handler must be a function")
 	}
 
-	// If the number of matches is equal to the number of predicates ('all matching'), then the event is a match.
-	return matches == len(p)
+	return sseClient.Subscribe("message", func(msg *sse.Event) {
+		if len(msg.Data) == 0 {
+			return
+		}
+
+		handlerType := handler.Type()
+		if handlerType.NumIn() != 1 {
+			log.Println("Handler function must take exactly one parameter")
+			return
+		}
+
+		eventDataPtr := reflect.New(handlerType.In(0))
+
+		// Navigate through embedded fields to find the actual type
+		actualType := eventDataPtr.Type()
+		for actualType.Kind() == reflect.Ptr {
+			actualType = actualType.Elem()
+		}
+
+		if actualType != handlerType.In(0) {
+			log.Println("Handler function parameter type doesn't match the event type")
+			return
+		}
+
+		if err := json.Unmarshal(msg.Data, eventDataPtr.Interface()); err != nil {
+			log.Printf("Error deserializing JSON event: %s\n", err)
+			return
+		}
+
+		// Type assertion to call the specific handler
+		handler.Call([]reflect.Value{eventDataPtr.Elem()})
+		*lastSub = time.Now()
+	})
 }
 
 func (client *Client) url(stream string) string {
